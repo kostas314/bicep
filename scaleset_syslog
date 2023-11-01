@@ -1,1 +1,212 @@
+param location string = resourceGroup().location
+param instanceCount int = 2
+param adminUsername string
+param sshPublicKey string
+param vmSize string = 'Standard_DS1_v2'
+param redHatImageVersion string = 'latest'
+
+// Network Security Group for VMSS
+resource nsg 'Microsoft.Network/networkSecurityGroups@2022-01-01' = {
+  location: location
+  name: 'syslogNsg'
+  properties: {
+    securityRules: [
+      {
+        name: 'AllowSyslogTCP'
+        properties: {
+          priority: 100
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '514'
+        }
+      }
+      {
+        name: 'AllowSSH'
+        properties: {
+          priority: 200
+          access: 'Allow'
+          direction: 'Inbound'
+          protocol: 'Tcp'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '22'
+        }
+      }
+    ]
+  }
+}
+
+// Virtual Network
+resource vnet 'Microsoft.Network/virtualNetworks@2022-01-01' = {
+  location: location
+  name: 'syslogVnet'
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.0.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: 'syslogSubnet'
+        properties: {
+          addressPrefix: '10.0.1.0/24'
+          networkSecurityGroup: {
+            id: nsg.id
+          }
+        }
+      }
+    ]
+  }
+}
+
+// Public IP Address for Load Balancer
+resource publicIP 'Microsoft.Network/publicIPAddresses@2022-01-01' = {
+  location: location
+  name: 'syslogPublicIP'
+  properties: {
+    publicIPAddressVersion: 'IPv4'
+    publicIPAllocationMethod: 'Dynamic'
+    sku: {
+      name: 'Basic'
+    }
+  }
+}
+
+// Load Balancer
+resource loadBalancer 'Microsoft.Network/loadBalancers@2022-01-01' = {
+  location: location
+  name: 'syslogLB'
+  properties: {
+    frontendIPConfigurations: [
+      {
+        name: 'LoadBalancerFrontEnd'
+        properties: {
+          publicIPAddress: {
+            id: publicIP.id
+          }
+        }
+      }
+    ]
+    backendAddressPools: [
+      {
+        name: 'syslogBackendPool'
+      }
+    ]
+    probes: [
+      {
+        name: 'syslogProbe'
+        properties: {
+          protocol: 'Tcp'
+          port: 514
+          intervalInSeconds: 5
+          numberOfProbes: 2
+        }
+      }
+    ]
+    loadBalancingRules: [
+      {
+        name: 'syslogRule'
+        properties: {
+          frontendIPConfiguration: {
+            id: loadBalancer.properties.frontendIPConfigurations[0].id
+          }
+          backendAddressPool: {
+            id: loadBalancer.properties.backendAddressPools[0].id
+          }
+          probe: {
+            id: loadBalancer.properties.probes[0].id
+          }
+          protocol: 'Tcp'
+          frontendPort: 514
+          backendPort: 514
+          enableFloatingIP: false
+          idleTimeoutInMinutes: 4
+        }
+      }
+    ]
+  }
+}
+
+// Virtual Machine Scale Set
+resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2022-03-01' = {
+  location: location
+  name: 'syslogVMSS'
+  sku: {
+    name: vmSize
+    tier: 'Standard'
+    capacity: instanceCount
+  }
+  properties: {
+    overprovision: true
+    upgradePolicy: {
+      mode: 'Manual'
+    }
+    virtualMachineProfile: {
+      osProfile: {
+        computerNamePrefix: 'syslogVM'
+        adminUsername: adminUsername
+        linuxConfiguration: {
+          disablePasswordAuthentication: true
+          ssh: {
+            publicKeys: [
+              {
+                path: '/home/${adminUsername}/.ssh/authorized_keys'
+                keyData: sshPublicKey
+              }
+            ]
+          }
+        }
+      }
+      storageProfile: {
+        imageReference: {
+          publisher: 'RedHat'
+          offer: 'RHEL'
+          sku: '8_4'
+          version: redHatImageVersion
+        }
+        osDisk: {
+          caching: 'ReadWrite'
+          managedDisk: {
+            storageAccountType: 'Standard_LRS'
+          }
+          createOption: 'FromImage'
+        }
+      }
+      networkProfile: {
+        networkInterfaceConfigurations: [
+          {
+            name: 'syslogNIC'
+            properties: {
+              primary: true
+              enableIPForwarding: false
+              ipConfigurations: [
+                {
+                  name: 'syslogIPConfig'
+                  properties: {
+                    subnet: {
+                      id: vnet.properties.subnets[0].id
+                    }
+                    loadBalancerBackendAddressPools: [
+                      {
+                        id: loadBalancer.properties.backendAddressPools[0].id
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+
+output publicIPAddress string = publicIP.properties.ipAddress
 
