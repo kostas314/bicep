@@ -65,27 +65,33 @@ resource vnet 'Microsoft.Network/virtualNetworks@2022-01-01' = {
   }
 }
 
+// Variables to avoid self-reference
+var loadBalancerName = 'syslogLB'
+var frontEndIPConfigName = 'LoadBalancerFrontEnd'
+var backEndAddressPoolName = 'syslogBackendPool'
+var probeName = 'syslogProbe'
+
 // Public IP Address for Load Balancer
 resource publicIP 'Microsoft.Network/publicIPAddresses@2022-01-01' = {
   location: location
   name: 'syslogPublicIP'
+  sku: {
+    name: 'Basic'
+  }
   properties: {
     publicIPAddressVersion: 'IPv4'
     publicIPAllocationMethod: 'Dynamic'
-    sku: {
-      name: 'Basic'
-    }
   }
 }
 
 // Load Balancer
 resource loadBalancer 'Microsoft.Network/loadBalancers@2022-01-01' = {
   location: location
-  name: 'syslogLB'
+  name: loadBalancerName
   properties: {
     frontendIPConfigurations: [
       {
-        name: 'LoadBalancerFrontEnd'
+        name: frontEndIPConfigName
         properties: {
           publicIPAddress: {
             id: publicIP.id
@@ -95,12 +101,12 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-01-01' = {
     ]
     backendAddressPools: [
       {
-        name: 'syslogBackendPool'
+        name: backEndAddressPoolName
       }
     ]
     probes: [
       {
-        name: 'syslogProbe'
+        name: probeName
         properties: {
           protocol: 'Tcp'
           port: 514
@@ -114,13 +120,13 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-01-01' = {
         name: 'syslogRule'
         properties: {
           frontendIPConfiguration: {
-            id: loadBalancer.properties.frontendIPConfigurations[0].id
+            id: resourceId('Microsoft.Network/loadBalancers/frontendIPConfigurations', loadBalancerName, frontEndIPConfigName)
           }
           backendAddressPool: {
-            id: loadBalancer.properties.backendAddressPools[0].id
+            id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backEndAddressPoolName)
           }
           probe: {
-            id: loadBalancer.properties.probes[0].id
+            id: resourceId('Microsoft.Network/loadBalancers/probes', loadBalancerName, probeName)
           }
           protocol: 'Tcp'
           frontendPort: 514
@@ -132,6 +138,7 @@ resource loadBalancer 'Microsoft.Network/loadBalancers@2022-01-01' = {
     ]
   }
 }
+
 
 // Virtual Machine Scale Set
 resource vmss 'Microsoft.Compute/virtualMachineScaleSets@2022-03-01' = {
